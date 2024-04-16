@@ -80,6 +80,10 @@ public interface RecyclerPool<P extends RecyclerPool.WithPool<P>> extends Serial
         return acquirePooled().withPool(this);
     }
 
+    default int size() {
+        return -1;
+    }
+
     /**
      * Method for sub-classes to implement for actual acquire logic; called
      * by {@link #acquireAndLinkPooled()}.
@@ -288,6 +292,17 @@ public interface RecyclerPool<P extends RecyclerPool.WithPool<P>> extends Serial
         protected LockFreePoolBase(int serialization) {
             super(serialization);
             head = new AtomicReference<>();
+        }
+
+        @Override
+        public int size() {
+            Node<P> next = head.get();
+            int size = 0;
+            while (next != null) {
+                size++;
+                next = next.next;
+            }
+            return size;
         }
 
         // // // Actual API implementation
