@@ -1,61 +1,63 @@
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.util.BufferRecycler;
-import com.fasterxml.jackson.core.util.JsonRecyclerPools;
-import com.fasterxml.jackson.core.util.RecyclerPool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.StringReader;
-import java.lang.reflect.Field;
+import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.IntSummaryStatistics;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 
 public class JacksonLab {
-    public static void main(String[] args) throws Exception {
-        System.out.println("starting demo");
-        ObjectMapper mapper = new ObjectMapper();
+    private static final Writer logWriter;
 
-//        Field headField = RecyclerPool.LockFreePoolBase.class.getDeclaredField("head");
-        JsonRecyclerPools.LockFreePool pool = (JsonRecyclerPools.LockFreePool) mapper.getJsonFactory()._getRecyclerPool();
-//        Class<?> nodeClass = Class.forName("com.fasterxml.jackson.core.util.RecyclerPool$LockFreePoolBase$Node");
-//        Field nextField = nodeClass.getDeclaredField("next");
-//        Field valueField = nodeClass.getDeclaredField("value");
-//        setAccessible(headField, nextField, valueField);
+    static {
+        try {
+            String fileName = "current.log";
+            new File(fileName).delete();
+            logWriter = new FileWriter(fileName, true);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void log(Object s) {
+        System.out.println(s);
+        try {
+            logWriter.append(s + "\n");
+            logWriter.flush();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+    }
+    public static void main(String[] args) throws Exception {
+        log("starting demo");
+        ObjectMapper mapper = new ObjectMapper();
+//        new ObjectMapper(new JsonFactory(new JsonFactoryBuilder().recyclerPool(JsonRecyclerPools.threadLocalPool())));
+
+        RecyclerPoolSizeCalculator poolSizeCalculator = new RecyclerPoolSizeCalculator(mapper);
 
         for (int i = 0; i < 1000; i++) {
             startThread(mapper, i);
         }
-        int[] depthes = new int[10];
+        int[] depthes = new int[50];
         int index = 0;
         while (true) {
-            Thread.sleep(100);
-            int depth = pool.size();
-//            AtomicReference head = (AtomicReference) headField.get(pool);
-//            Object next = head.get();
-//            while (next != null && depth < 1000) {
-//                depth++;
-//                next = nextField.get(next);
-//            }
-            depthes[index++] = depth;
+            Thread.sleep(20);
+            depthes[index++] = poolSizeCalculator.calculateSize();
             if (index == depthes.length) {
                 index = 0;
                 Arrays.sort(depthes);
-                String summary = IntStream.of(depthes).summaryStatistics().toString().replace("IntSummaryStatistics", "");
-                System.out.println("depth: " + summary + ". pct10: " + depthes[1] + ", pct90: " + depthes[8] + ", free_memory: " + (Runtime.getRuntime().freeMemory() / 1024) + "k, total_memory: " + (Runtime.getRuntime().totalMemory() / 1024) + "k");
-//                PushMetricsToMyGrafana.sendMetric("depth", "", summary.getAverage());
-//                PushMetricsToMyGrafana.sendMetric("jvm_runtime_free_memory", "host=my_mac,app=JacksonLab", Runtime.getRuntime().freeMemory());
+                IntSummaryStatistics summary = IntStream.of(depthes).summaryStatistics();
+                String freeMem = (Runtime.getRuntime().freeMemory() / 1024) + "k";
+                String totalMem = (Runtime.getRuntime().totalMemory() / 1024) + "k";
+                log("depth: " + summary + ". pct10: " + depthes[1] + ", pct90: " + depthes[8] + ", free_memory: " + freeMem + ", total_memory: " + totalMem);
             }
-        }
-    }
-
-    private static void setAccessible(Field... fields) {
-        for (Field field : fields) {
-            field.setAccessible(true);
         }
     }
 
@@ -75,7 +77,7 @@ public class JacksonLab {
                 s.append("}");
                 data.add(s.toString());
             }
-            System.out.println("data generated for thread " + i);
+            log("data generated for thread " + i);
             for (long j = 0; j < Long.MAX_VALUE; j++) {
                 try {
                     JsonNode jsonNode = mapper.readTree(new SlowStringReader(data.get((int) (j % data.size()))));
@@ -84,13 +86,9 @@ public class JacksonLab {
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
+                Thread.yield();
             }
-            System.out.println(x);
+            log(x);
         }).start();
     }
 
@@ -103,14 +101,14 @@ public class JacksonLab {
 
         @Override
         public int read(char[] cbuf, int off, int len) throws IOException {
-//            if (!slowed) {
-//                try {
-//                    Thread.sleep(1);
-//                } catch (InterruptedException e) {
-//                    throw new RuntimeException(e);
-//                }
-//                slowed = true;
-//            }
+            if (!slowed) {
+                try {
+                    Thread.sleep(1);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                slowed = true;
+            }
             return super.read(cbuf, off, len);
         }
     }
