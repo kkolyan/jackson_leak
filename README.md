@@ -1,0 +1,1 @@
+reproduction of https://github.com/FasterXML/jackson-core/issues/1260
